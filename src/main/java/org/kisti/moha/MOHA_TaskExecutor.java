@@ -1,5 +1,7 @@
 package org.kisti.moha;
 
+//import weka.*;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -113,7 +115,7 @@ public class MOHA_TaskExecutor {
 			LOG.debug("File " + filename + "copied to " + dest);
 		} catch (Exception e) {
 			LOG.debug("Exception caught! :" + e);
-			System.exit(1);
+			System.exit(1); 
 		} finally {
 			fileSystem.close();
 		}
@@ -175,7 +177,7 @@ public class MOHA_TaskExecutor {
 
 			BufferedReader buffReader = new BufferedReader(new InputStreamReader(p.getInputStream()));
 			while ((cliResponse = buffReader.readLine()) != null) {
-				 //LOG.debug("TaskExecutor [" + info.getExecutorId() + "] " + cliResponse);
+				 LOG.debug("TaskExecutor [" + info.getExecutorId() + "] " + cliResponse);
 			}
 		} catch (IOException | InterruptedException e) {
 			// TODO Auto-generated catch block
@@ -219,8 +221,9 @@ public class MOHA_TaskExecutor {
 		 * Construct a Zookeeper server which is used to inform number of completed tasks to MOHA Client
 		 */
 		MOHA_Zookeeper zkServer = new MOHA_Zookeeper(MOHA_Properties.ZOOKEEPER_ROOT, info.getAppId());
-
+		LOG.debug("TaskExecutor [" + info.getExecutorId() + "] starts [at]:" + zkServer.getCurrentTime());
 		systemCurrentTime = zkServer.getSystemTime();
+		
 		capturing_time = systemCurrentTime;
 		/* Set ending time, which can be updated frequently */
 		info.setEndingTime(systemCurrentTime);

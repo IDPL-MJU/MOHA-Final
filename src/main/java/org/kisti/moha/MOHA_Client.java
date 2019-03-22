@@ -77,6 +77,7 @@ public class MOHA_Client {
 	String appType = "";
 	MOHA_Queue jobQueue;
 	boolean pushingFinish = false;
+	boolean rStop = false;
 
 	public static void main(String[] args) throws IOException {
 		// [UPDATE] Change the flow of the main function to enable exception
@@ -217,7 +218,7 @@ public class MOHA_Client {
 	private void printUsage(Options opts) {
 		new HelpFormatter().printHelp("MOHA_Client", opts);
 	}
-
+/*
 	private void dispatchDockingTasks(MOHA_Queue jobQueue, String rootDir) {
 
 		File folder = new File("vina_input");
@@ -248,7 +249,7 @@ public class MOHA_Client {
 		}
 
 	}
-
+*/
 	public boolean run() throws YarnException, IOException {
 		LOG.info("yarnClient = {}", yarnClient.toString());
 		// Get configuration information
@@ -270,9 +271,9 @@ public class MOHA_Client {
 		}		
 
 		/* Insert tasks to job queue */
-		TasksPushing tasksToQueue = new TasksPushing();
-		Thread startThread = new Thread(tasksToQueue);
-		startThread.start();
+		TaskSubmitter taskSubmitter = new TaskSubmitter();
+		Thread taskSubmitterThread = new Thread(taskSubmitter);
+		taskSubmitterThread.start();
 
 		zks = new MOHA_Zookeeper(MOHA_Client.class, MOHA_Properties.ZOOKEEPER_ROOT, appId.toString());
 
@@ -286,9 +287,15 @@ public class MOHA_Client {
 		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_RESULTS_EXE_LOG);
 		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_EXE_PERFORMANCE_LOG);
 		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_TIME_START);
+		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_TIMER);
 		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_TIME_COMPLETE);
 		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_NUM_PROCESSED_TASKS);
 		zks.createDirs(MOHA_Properties.ZOOKEEPER_DIR_REQUEST_STOP);
+		
+		/* Update current time to zookeeper server */
+		Timer timer = new Timer();
+		Thread timerThread = new Thread(timer);
+		timerThread.start();
 
 		// dispatchDockingTasks(jobQueue,rootDir);
 
@@ -438,6 +445,7 @@ public class MOHA_Client {
 		/* Submits the application */
 
 		//LOG.info("MOHA Manager Container = {}", managerContainer.toString());
+		LOG.info("Submit the app [at]"+ zks.getCurrentTime());
 		ApplicationId appId = yarnClient.submitApplication(appContext);
 		LOG.info("Submit Application - AppID = {}", appId.toString());
 		//LOG.info("zookeeperConnect = {} bootstrapServer = {}", zookeeperConnect, bootstrapServer);
@@ -550,7 +558,8 @@ public class MOHA_Client {
 		} catch (IOException e) {
 			// exception handling left as an exercise for the reader
 		}
-
+		System.out.println("End loop");
+		rStop = true;
 		jobQueue.deleteQueue();
 		jobQueue.close();
 		zks.delete(zks.getRoot());
@@ -561,7 +570,7 @@ public class MOHA_Client {
 		LOG.info("Application successfully finish");
 		return true;
 	}// The end of run function
-
+/*
 	private boolean copyFolderToHDFS(String directory, String destRoot) {
 		File dir = new File(directory);
 		File[] fileList = dir.listFiles();
@@ -583,6 +592,7 @@ public class MOHA_Client {
 		}
 		return true;
 	}
+	*/
 
 	public static void setEnv(Map<String, String> newenv) throws Exception {
 		Class[] classes = Collections.class.getDeclaredClasses();
@@ -598,10 +608,30 @@ public class MOHA_Client {
 			}
 		}
 	}
+	protected class Timer implements Runnable{
+		public Timer(){
+			
+		}
+		@Override
+		public void run() {
+			// TODO Auto-generated method stub
+			while(!rStop){
+				zks.setCurrentTime(System.currentTimeMillis());
+				try {
+					Thread.sleep(100);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+			
+		}
+		
+	} 
 
-	protected class TasksPushing implements Runnable {
+	protected class TaskSubmitter implements Runnable {
 
-		public TasksPushing() {
+		public TaskSubmitter() {
 			// TODO Auto-generated constructor stub
 		}
 
@@ -624,12 +654,13 @@ public class MOHA_Client {
 			
 
 			try {
+				//The file that contains description of user application
 				fileReader = new FileReader(jdlPath);
 				LOG.info(fileReader.toString());
 				BufferedReader buff = new BufferedReader(fileReader);
 				appType = buff.readLine();
 
-				if (appType.equals("S")) {
+				if (appType.equals("S")) {// S denotes parameter sweeping application
 					System.out.println("S");
 					int num_inputs = Integer.parseInt(buff.readLine());
 					List<String> directories = new ArrayList<String>();
@@ -644,10 +675,10 @@ public class MOHA_Client {
 						System.out.println("str[1]: " + str[1]);
 						order.add(str[0]);
 						switch (str[0]) {
-						case "D":
+						case "D"://D denotes directory which contains many input files
 							directories.add(str[1]);
 							break;
-						case "P":
+						case "P"://P denotes file which contains input parameters
 							parameters.add(str[1]);
 							break;
 						default:
@@ -655,8 +686,8 @@ public class MOHA_Client {
 							break;
 						}
 					}
-					shell_command = buff.readLine();
-					appDependencyFiles = buff.readLine();
+					shell_command = buff.readLine(); // the executable shell script file name
+					appDependencyFiles = buff.readLine();// the compressed file that contains all related files, library etc 
 					String command_description = null;
 					// Copy all input files in the folder to HDFS
 					LOG.info("Start copying local files to HDFS");
@@ -751,7 +782,7 @@ public class MOHA_Client {
 						return;
 					}
 
-				} else {
+				} else {// this is for executing same task multiple times
 					// Command mode
 					System.out.println("App type: " + appType);
 					numCommands = numExecutors * Integer.parseInt(buff.readLine());
