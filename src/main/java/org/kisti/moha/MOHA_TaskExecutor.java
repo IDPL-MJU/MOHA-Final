@@ -1,6 +1,7 @@
 package org.kisti.moha;
 
-//import weka.*;
+import weka.core.Instances;
+import weka.core.converters.ArffSaver;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -177,7 +178,7 @@ public class MOHA_TaskExecutor {
 
 			BufferedReader buffReader = new BufferedReader(new InputStreamReader(p.getInputStream()));
 			while ((cliResponse = buffReader.readLine()) != null) {
-				 LOG.debug("TaskExecutor [" + info.getExecutorId() + "] " + cliResponse);
+				 //LOG.debug("TaskExecutor [" + info.getExecutorId() + "] " + cliResponse);
 			}
 		} catch (IOException | InterruptedException e) {
 			// TODO Auto-generated catch block
@@ -236,7 +237,7 @@ public class MOHA_TaskExecutor {
 		/*
 		 * Copy all files from executable directory to current directory
 		 */
-		if (appType.equals("S")) {
+		if (appType.equals("S")) {//for sweep parameter application
 			File[] listFiles = new File(MOHA_Properties.EXECUTABLE_DIR).listFiles();
 			LOG.debug("TaskExecutor [" + info.getExecutorId() + "] number of files: " + listFiles.length);
 			// Hadoop resource localization fail
@@ -299,9 +300,11 @@ public class MOHA_TaskExecutor {
 					}
 				}
 			}
+		}else{
+			//multiple execution same executable application
 		}
 
-		// Wait until all executors started
+		// Wait until all executors started 
 		while (!zkServer.getPollingEnable()) {
 			try {
 				Thread.sleep(100);
@@ -315,14 +318,15 @@ public class MOHA_TaskExecutor {
 		LOG.debug("TaskExecutor [" + info.getExecutorId() + "] Start executor threads");
 		
 		/* Start executor threads */
-		info.setNumRequestedThreads(60);
-		info.setNumSpecifiedTasks(2);
-		info.setNumExecutedTasks(0);
-		info.setNumExecutingTasks(0);
-		info.setNumActiveThreads(0);
-		info.setQueueEmpty(false);
+		info.setNumRequestedThreads(60);//number of executing threads to be started
+		info.setNumSpecifiedTasks(2);//number of concurrent tasks are specified (parallelism level)
+		info.setNumExecutedTasks(0);//number of tasks which are already performed
+		info.setNumExecutingTasks(0);//number of tasks which are running
+		info.setNumActiveThreads(0);//number of threads which are active
+		info.setQueueEmpty(false);//set job queue status to be not empty
 
 		LOG.debug("TaskExecutor [" + info.getExecutorId() + "] Number of executing tasks: " + info.getNumExecutingTasks());
+		//Start executing threads
 		for (int i = 0; i < info.getNumRequestedThreads(); i++) {
 			ThreadTaskExecutor taskExecutor = new ThreadTaskExecutor(i);
 			Thread startExecutor = new Thread(taskExecutor);
@@ -334,8 +338,9 @@ public class MOHA_TaskExecutor {
 				e.printStackTrace();
 			}
 		}
-		int numPreviousCompletedTasks;
-		int numCompletedTasksPerWindow;
+		
+		int numPreviousCompletedTasks;//number of tasks which are finished in previous period of time
+		int numCompletedTasksPerWindow;//number of tasks which are executed in a specified period of time
 		long previousCheckingPoint, windowsTime;
 		float previousPerformance, currentPerformance;
 		int previousNumExecutingTasks = info.getNumExecutingTasks();
@@ -355,26 +360,30 @@ public class MOHA_TaskExecutor {
 			}
 		}
 		
-		/* Wait for fist windows */
+		/* Wait for fist windows (period of time) */
+		int aUnit = 5;//the throughput is calculated based on aUnit which is number of tasks
 		previousCheckingPoint = System.currentTimeMillis();
-		while (info.getNumExecutedTasks() < 2 * info.getNumSpecifiedTasks()) {
+		//wait until first aUnit tasks are completed, which is to calculate average task running time
+		while (info.getNumExecutedTasks() < aUnit * info.getNumSpecifiedTasks()) {
 			try {
 				Thread.sleep(100);
 			} catch (InterruptedException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
+			//update the number of executing tasks
 			if(previousNumExecutingTasks!= info.getNumExecutingTasks()){
 				previousNumExecutingTasks = info.getNumExecutingTasks();
 				LOG.debug("TaskExecutor [" + info.getExecutorId() + "] Number of executing tasks: " + info.getNumExecutingTasks());
 			}
 		}
-		
-		windowsTime = System.currentTimeMillis() - previousCheckingPoint;
+		//Calculate the period of previous executing time
+		windowsTime = System.currentTimeMillis() - previousCheckingPoint;	
 		numPreviousCompletedTasks = info.getNumExecutedTasks();
 		numCompletedTasksPerWindow = numPreviousCompletedTasks;
+		//Reset checking point for next window of execution
 		previousCheckingPoint = System.currentTimeMillis();
-
+		//Calculate the performance (tasks per minute)
 		previousPerformance = (float) (60000 * numCompletedTasksPerWindow / windowsTime);
 		currentPerformance = previousPerformance;
 		
@@ -386,12 +395,16 @@ public class MOHA_TaskExecutor {
 				+ " #executing tasks: " + info.getNumExecutingTasks() 
 				+ " #specifiedNumber: " + info.getNumSpecifiedTasks() 
 				);
+		//Start searching process based on hill climbing algorithm
+		//Initialize direction, false denotes the increase of parallelism level
+		boolean direction = false;//true:down, false:up
+		int step = 2;//increasing step is fixed to 1
 		
-		boolean direction = false;
-		int step = 1;
-		int windowsRatio = 3;
 		/* Wait for every thread completed */
 		while (info.getNumRunningThreads() > 0) {
+			//Apply machine learning here
+			//predictedLevel = getPredict()
+			//info.setNumSpecifiedTasks(predictedLevel);
 			if (info.isQueueEmpty())
 				step = 0;
 			if (direction) {
@@ -404,8 +417,8 @@ public class MOHA_TaskExecutor {
 			} else {
 				info.setNumSpecifiedTasks(info.getNumSpecifiedTasks() + step);
 			}
-			
-			while ((info.getNumExecutedTasks() - numPreviousCompletedTasks) < windowsRatio * info.getNumSpecifiedTasks()) {
+			//wait for a window
+			while ((info.getNumExecutedTasks() - numPreviousCompletedTasks) < aUnit * info.getNumSpecifiedTasks()) {
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e) {
@@ -428,9 +441,19 @@ public class MOHA_TaskExecutor {
 			previousCheckingPoint = System.currentTimeMillis();
 
 			currentPerformance = (float)(60000 * numCompletedTasksPerWindow / windowsTime);
-
+			//if the performance is not increased, change the direction
 			if (currentPerformance < previousPerformance) {
 				direction = !direction;
+				int optimal;
+				if(direction){
+					optimal = info.getNumSpecifiedTasks() - step;
+				}else{
+					optimal = info.getNumSpecifiedTasks() + step;
+				}
+				LOG.debug("TaskExecutor [" + info.getExecutorId() + "][" + info.getHostname() 
+				+ "] Optimal number: " + optimal);
+				step = 0;
+				//save this state
 				//windowsRatio +=2;
 			}
 
